@@ -1,0 +1,111 @@
+$connectionName = "AzureRunAsConnection"
+try
+{
+    # Get the connection "AzureRunAsConnection "
+    $servicePrincipalConnection=Get-AutomationConnection -Name $connectionName         
+
+    "Logging in to Azure..."
+    Add-AzureRmAccount `
+        -ServicePrincipal `
+        -TenantId $servicePrincipalConnection.TenantId `
+        -ApplicationId $servicePrincipalConnection.ApplicationId `
+        -CertificateThumbprint $servicePrincipalConnection.CertificateThumbprint 
+}
+catch
+{
+    if (!$servicePrincipalConnection)
+    {
+        $ErrorMessage = "Connection $connectionName not found."
+        throw $ErrorMessage
+    }else
+    {
+        Write-Error -Message $_.Exception
+        throw $_.Exception
+    }
+}
+
+
+Write-Output "Getting list of resource groups"
+
+$rgs = Get-AzureRmResourceGroup
+
+Write-Output "Resource group count: $($rgs.count)"
+
+$appList = @()
+
+# Building List for Apps that contains the StopApp Tag
+Write-Output "Building List for App Services that contains the StopApp Tag"
+foreach ($rg in $rgs)
+{
+	Write-Output "Getting App Services from Resource Group $($rg.ResourceGroupName)"
+	$apps = Get-AzureRmWebApp -ResourceGroupName $rg.ResourceGroupName | where {$_.Tags.values -eq "StopAutomatico"}
+	
+	foreach ($app in $apps)
+	{
+		Write-Output "   Tag 'StopApp' found for App Service resource $($app.name)"
+		$appObj = New-Object -TypeName PSObject -Property @{"Name"=$app.Name;"ResourceGroupName"=$app.ResourceGroup;"State"=$app.State}
+		$appList += $appObj
+	}
+}
+
+write-Output "App Services to be evaluated count: $($appList.Count)"
+
+$appsToStop = @()
+
+# Evaluating which App Services will stop
+Write-Output "Evaluating which App Services will be stopped"
+Write-Output "Comparing App Services state to check if it will be stopped or if it is already stopped."
+foreach ($app in $appList)
+{
+	Write-Output "   Checking App Services $($app.name) state"
+	
+	Write-Output "App Services $($app.name) state is '$($app.State)'"
+	if ($app.State -eq "Running")
+	{
+		Write-Output "   App Service $($app.name) will be stopped."
+		$appsToStop += $app
+	}
+	elseif ($app.State -eq "Stopped")
+	{
+		Write-Output "   App Service $($app.name) is already stopped."
+	}
+    else
+    {
+        Write-Output "   App Service $($app.name) is in an unknown state. See App Services Logs."
+    }
+}
+
+write-Output "App Services to be stopped count: $($appsToStop.Count)"
+
+# Stopping App Services
+foreach ($app in $appsToStop)
+{
+	# Stop App Services
+		Write-Output "Stopping App Service $($app.name)"
+		Stop-AzureRmWebApp -Name $app.name -ResourceGroupName $app.ResourceGroupName -ErrorAction Continue
+		Write-Output ($app.Name + " has been stopped.")	
+}
+Write-Output "End of stopping App Services"
+
+$appDetail = @()
+
+foreach ($app in $appsToStop)
+{
+	#Validating App Services State
+	Write-Output "Checking App Services $($app.name) state"
+	$appDetail = Get-AzureRmWebApp -ResourceGroupName $app.ResourceGroupName -Name $app.Name
+	Write-Output "App Services $($app.name) state is $($appDetail.state)'"
+	
+	if ($appDetail.state -eq "Stopped")
+	{
+		# The App Services stopped, so send notice
+		Write-Output ("   " + $app.Name + " was successfully stopped.")
+	}
+	else
+	{
+		# The App Services failed to stop, so send notice
+		Write-Error  ("   " + $app.Name + " failed to stop. See App Services Logs.") -ErrorAction Continue
+	}
+}
+
+Write-Output "End of runbook execution"
