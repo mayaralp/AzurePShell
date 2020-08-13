@@ -1,0 +1,146 @@
+$connectionName = "AzureRunAsConnection"
+try
+{
+    # Get the connection "AzureRunAsConnection "
+    $servicePrincipalConnection=Get-AutomationConnection -Name $connectionName         
+
+    "Logging in to Azure..."
+    Add-AzureRmAccount `
+        -ServicePrincipal `
+        -TenantId $servicePrincipalConnection.TenantId `
+        -ApplicationId $servicePrincipalConnection.ApplicationId `
+        -CertificateThumbprint $servicePrincipalConnection.CertificateThumbprint 
+}
+catch
+{
+    if (!$servicePrincipalConnection)
+    {
+        $ErrorMessage = "Connection $connectionName not found."
+        throw $ErrorMessage
+    }else
+    {
+        Write-Error -Message $_.Exception
+        throw $_.Exception
+    }
+}
+
+Write-Output "Getting last execution status of runbook 'YourRunbookName'"
+
+# Get Last Job Execution Details
+$job = (Get-AzureRmAutomationJob –AutomationAccountName "YourAutomationAccount" –RunbookName "YourRunbookName" -ResourceGroupName "YourAutomationRGName")[0]
+$jobOut = Get-AzureRmAutomationJobOutput –AutomationAccountName $job.AutomationAccountName -ResourceGroupName $job.resourcegroupname -Id $job.JobId -Stream Error
+$StartTime = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId($job.StartTime, 'E. South America Standard Time') -f "dd/MM/yyyy HH:mm"
+$EndTime = [System.TimeZoneInfo]::ConvertTimeBySystemTimeZoneId($job.EndTime, 'E. South America Standard Time') -f "dd/MM/yyyy HH:mm"
+$Duration = $job.EndTime - $job.StartTime
+$Duration = "$($Duration.Hours)h$($Duration.Minutes)m"
+
+if ($($jobOut.Type) -eq "Error")
+{
+	$jobStatus = 'Failed'
+}else
+{
+	$jobStatus = $($job.status)
+}
+
+Write-Output 'Getting Credential to send e-mail'
+
+# Retrieve SendGrid Credential from Azure Automation Credentials
+$sendGridUserName = "sendgridusername@azure.com"
+$securePassword = ConvertTo-SecureString -String "sendgridpassword" -AsPlainText -Force
+$credential = New-Object System.Management.Automation.PsCredential($sendGridUserName,$securePassword)
+$emailSmtpUser  = $credential.UserName
+$emailSmtpPass = $credential.GetNetworkCredential().Password
+
+# Set email subject
+$subject ="[Azure Automation Notify] $($jobStatus) - $($job.RunbookName)"
+
+# Set addresses-properties
+$emailFrom = "no-reply@yourcompany.com.br"
+$emailTo	= "emailtosendto@yourcompany.com.br"
+$emailCC	= "emailtocopyto@yourcompany.com.br,emailtosendto@yourcompany.com.br"
+
+# Validade If Last Run Was Not Completed
+Write-Output "Validating status of last execution of runbook '$($job.RunbookName)'"
+if($job.status -eq "Failed" -or $job.status -eq "Stopped" -or $job.status -eq "Suspended" -or $jobOut.Type -eq "Error")
+{
+    Write-Output 'Preparing to send e-mail'
+
+    # Set email body
+    $MessageBody = "O status da ultima execução do job de start das VMs na Azure foi '$($job.status)'."
+	if($jobOut.Type -eq "Error"){$MessageBody += "</br>$($jobOut.Summary)"}
+    $MessageBody += "</br></br>Equipe N1, </br> Por favor abrir um chamado e direcionar para Equipe responsável."
+	$MessageBody += "</br></br>Equipe Responsável, </br> Verifique os logs da execução na conta de automação '$($job.AutomationAccountName)' no Portal da Azure."
+	
+	$FormatFont = "color: red";
+	
+	$body = Get-AzureRmAutomationVariable -Name "MailBody" -ResourceGroupName "YourAutomationRGName" -AutomationAccountName "YourAutomationAccount"
+	$body = $body.Value
+	$body = $body.replace("#JobName#", "$($job.RunbookName)")
+	$body = $body.replace("#StartTime#", "$StartTime")
+    $body = $body.replace("#EndTime#", "$EndTime")
+    $body = $body.replace("#Duration#", "$Duration")
+	$body = $body.replace("#Status#", "$($job.status)")
+	$body = $body.replace("#FormatFont#", "$FormatFont")
+	$body = $body.replace("#MessageBody#", "$MessageBody")
+
+
+	$emailMessage = New-Object System.Net.Mail.MailMessage($emailFrom , $emailTo, $subject, $body)
+    $emailMessage.CC.Add($emailCC)
+	$emailMessage.IsBodyHTML=$true
+
+	# Create and set SMTP
+	$emailSmtpServer = "smtp.sendgrid.net"
+	$emailSmtpServerPort = 587
+	$SMTPClient = New-Object System.Net.Mail.SmtpClient($emailSmtpServer, $emailSmtpServerPort)
+	$SMTPClient.EnableSsl = $True
+	$SMTPClient.Credentials = New-Object System.Net.NetworkCredential($emailSmtpUser, $emailSmtpPass);
+
+	# Send email message
+	$SMTPClient.Send($emailMessage)
+    
+    Write-Output "O status da ultima execução do job de start das VMs na Azure foi '$($job.status)'."
+    Write-Output 'Um e-mail foi enviado com sucesso para a equipe responsável.'
+
+}else
+{	
+	
+	Write-Output 'Preparing to send e-mail'
+
+    # Set email body
+    $MessageBody = "O status da ultima execução do job de start das VMs na Azure foi '$($job.status)'.</br>"
+		
+	$FormatFont = "";
+	
+	$body = Get-AzureRmAutomationVariable -Name "MailBody" -ResourceGroupName "YourAutomationRGName" -AutomationAccountName "YourAutomationAccount"
+	$body = $body.Value
+	$body = $body.replace("#JobName#", "$($job.RunbookName)")
+	$body = $body.replace("#StartTime#", "$StartTime")
+    $body = $body.replace("#EndTime#", "$EndTime")
+    $body = $body.replace("#Duration#", "$Duration")
+	$body = $body.replace("#Status#", "$($job.status)") 
+	$body = $body.replace("#FormatFont#", "$FormatFont") 
+	$body = $body.replace("#MessageBody#", "$MessageBody")
+
+
+	$emailMessage = New-Object System.Net.Mail.MailMessage( $emailFrom , $emailTo, $subject, $body ) 
+    $emailMessage.CC.Add($emailCC)
+	$emailMessage.IsBodyHTML=$true 
+
+	# Create and set SMTP
+	$emailSmtpServer = "smtp.sendgrid.net"
+	$emailSmtpServerPort = 587
+	$SMTPClient = New-Object System.Net.Mail.SmtpClient($emailSmtpServer, $emailSmtpServerPort) 
+	$SMTPClient.EnableSsl = $True 
+	$SMTPClient.Credentials = New-Object System.Net.NetworkCredential($emailSmtpUser, $emailSmtpPass); 
+	
+
+	# Send email message
+	$SMTPClient.Send($emailMessage) 
+
+    Write-Output "O status da ultima execução do job de start das VMs na Azure foi '$($job.status)'."
+    Write-Output 'Um e-mail foi enviado com sucesso para a equipe responsável.'
+    Write-Output 'Job executado com sucesso.'
+
+}
+
+Write-Output 'End of runbook execution'
