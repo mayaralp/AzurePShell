@@ -1,0 +1,134 @@
+$connectionName = "AzureRunAsConnection"
+try
+{
+    # Get the connection "AzureRunAsConnection "
+    $servicePrincipalConnection=Get-AutomationConnection -Name $connectionName         
+
+    "Logging in to Azure..."
+    Add-AzureRmAccount `
+        -ServicePrincipal `
+        -TenantId $servicePrincipalConnection.TenantId `
+        -ApplicationId $servicePrincipalConnection.ApplicationId `
+        -CertificateThumbprint $servicePrincipalConnection.CertificateThumbprint 
+}
+catch
+{
+    if (!$servicePrincipalConnection)
+    {
+        $ErrorMessage = "Connection $connectionName not found."
+        throw $ErrorMessage
+    }else
+    {
+        Write-Error -Message $_.Exception
+        throw $_.Exception
+    }
+}
+
+
+Write-Output "Getting list of resource groups"
+
+$rgs = Get-AzureRmResourceGroup
+
+Write-Output "Resource group count: $($rgs.count)"
+
+$vmList = @()
+
+# Building List for VMs that contains the StartVM Tag
+Write-Output "Building List for VMs that contains the StartVM Tag"
+foreach ($rg in $rgs)
+{
+	Write-Output "Getting VMs from Resource Group $($rg.ResourceGroupName)"
+	$vms = Get-AzureRMVM -ResourceGroupName $rg.ResourceGroupName | where {$_.Tags.values -eq "StartAutomatico"}
+	
+	foreach ($vm in $vms)
+	{
+		Write-Output "   Tag 'StartVM' found for VM resource $($vm.name)"
+		$vmObj = New-Object -TypeName PSObject -Property @{"Name"=$vm.Name;"ResourceGroupName"=$vm.ResourceGroupName}
+		$vmList += $vmObj
+	}
+}
+
+write-Output "VMs to be evaluated count: $($vmList.Count)"
+
+$vmsToStart = @()
+
+# Evaluating which VM will start
+Write-Output "Evaluating which VM will be started"
+Write-Output "Comparing VM status to check if it will be started or if it is already started."
+foreach ($vm in $vmList)
+{
+	Write-Output "   Checking vm $($vm.name) status"
+	
+	# Performing some conversions in order to obtain the VM status
+	$vmFullStatus = Get-AzureRmVM -ResourceGroupName $vm.ResourceGroupName -Name $vm.Name -Status
+	$vmStatusJson = $vmFullStatus | ConvertTo-Json -depth 99
+
+	$vmStatus = $vmStatusJson | ConvertFrom-Json
+	$vmStatusCode = $vmStatus.Statuses[1].code
+
+	Write-Output "VM $($vm.name) status code is '$vmStatusCode'"
+	if ($vmStatusCode -eq "PowerState/deallocated" -or $vmStatusCode -eq "PowerState/stopped")
+	{
+		Write-Output "   VM $($vm.name) will be started."
+		$vmsToStart += $vm
+	}
+	elseif ($vmStatusCode -eq "PowerState/running")
+	{
+		Write-Output "   VM $($vm.name) is already started."
+	}
+    else
+    {
+        Write-Output "   VM $($vm.name) is an unknown status. See VM's Activity Logs."
+    }
+}
+
+write-Output "VMs to be started count: $($vmsToStart.Count)"
+
+# Starting VMs
+foreach ($vm in $vmsToStart)
+{
+  #VMs to start in background as exception
+	if($vm.Name -eq "VMName1" -or $vm.Name -eq "VMName2")
+	{
+		# Start VMs in background
+		Write-Output "Starting VM $($vm.name)"
+		Start-AzureRmVM -Name $vm.name -ResourceGroupName $vm.ResourceGroupName -AsJob -ErrorAction Continue
+		Write-Output ($vm.Name + " has been started in background.")
+    }
+	else
+	{
+		# Start VM
+		Write-Output "Starting VM $($vm.name)"
+		Start-AzureRmVM -Name $vm.name -ResourceGroupName $vm.ResourceGroupName -ErrorAction Continue
+		Write-Output ($vm.Name + " has been started.")		
+	}
+}
+Write-Output "End of starting VM"
+
+$vmDetail = @()
+
+foreach ($vm in $vmsToStart)
+{
+	#Validating VM State
+	Write-Output "Checking vm $($vm.name) status"
+	$vmDetail = Get-AzureRMVM -ResourceGroupName $vm.ResourceGroupName -VMName $vm.Name -Status
+	Write-Output "VM $($vm.name) status code is $($vmDetail.statuses[1].code) and state is '$($vmDetail.statuses[0].code)'"
+	
+	if ($vmDetail.statuses[1].code -eq "PowerState/running" -and $vmDetail.statuses[0].code -eq "ProvisioningState/succeeded")
+	{
+		# The VM started, so send notice
+		Write-Output ("   " + $vm.Name + " was started successfully.")
+	}
+	elseif ($vmDetail.statuses[1].code -eq "PowerState/running" -and $vmDetail.statuses[0].code -eq "ProvisioningState/updating")
+	{
+		# The VM has been started but is um provisining state "Updating", so send notice
+		Write-Output ("   " + $vm.Name + " has been started but is in provisining state 'Updating'.")
+	}
+	else
+	{
+		# The VM failed to start, so send notice
+		Write-Error  ("   " + $vm.Name + " failed to start. See VM's Activity Logs.") -ErrorAction Continue
+	}
+}
+
+Write-Output "End of runbook execution"
