@@ -1,0 +1,111 @@
+$connectionName = "AzureRunAsConnection"
+try
+{
+    # Get the connection "AzureRunAsConnection "
+    $servicePrincipalConnection=Get-AutomationConnection -Name $connectionName         
+
+    "Logging in to Azure..."
+    Add-AzureRmAccount `
+        -ServicePrincipal `
+        -TenantId $servicePrincipalConnection.TenantId `
+        -ApplicationId $servicePrincipalConnection.ApplicationId `
+        -CertificateThumbprint $servicePrincipalConnection.CertificateThumbprint 
+}
+catch
+{
+    if (!$servicePrincipalConnection)
+    {
+        $ErrorMessage = "Connection $connectionName not found."
+        throw $ErrorMessage
+    }else
+    {
+        Write-Error -Message $_.Exception
+        throw $_.Exception
+    }
+}
+
+
+Write-Output "Getting list of resource groups"
+
+$rgs = Get-AzureRmResourceGroup
+
+Write-Output "Resource group count: $($rgs.count)"
+
+$appList = @()
+
+# Building List for Apps that contains the StartApp Tag
+Write-Output "Building List for App Services that contains the StartApp Tag"
+foreach ($rg in $rgs)
+{
+	Write-Output "Getting App Services from Resource Group $($rg.ResourceGroupName)"
+	$apps = Get-AzureRmWebApp -ResourceGroupName $rg.ResourceGroupName | where {$_.Tags.values -eq "StartAutomatico"}
+	
+	foreach ($app in $apps)
+	{
+		Write-Output "   Tag 'StartApp' found for App Service resource $($app.name)"
+		$appObj = New-Object -TypeName PSObject -Property @{"Name"=$app.Name;"ResourceGroupName"=$app.ResourceGroup;"State"=$app.State}
+		$appList += $appObj
+	}
+}
+
+write-Output "App Services to be evaluated count: $($appList.Count)"
+
+$appsToStart = @()
+
+# Evaluating which App Services will start
+Write-Output "Evaluating which App Services will be started"
+Write-Output "Comparing App Services state to check if it will be started or if it is already started."
+foreach ($app in $appList)
+{
+	Write-Output "   Checking App Services $($app.name) state"
+	
+	Write-Output "App Services $($app.name) state is '$($app.State)'"
+	if ($app.State -eq "Stopped")
+	{
+		Write-Output "   App Service $($app.name) will be started."
+		$appsToStart += $app
+	}
+	elseif ($app.State -eq "Running")
+	{
+		Write-Output "   App Service $($app.name) is already running."
+	}
+    else
+    {
+        Write-Output "   App Service $($app.name) is in an unknown state. See App Services Logs."
+    }
+}
+
+write-Output "App Services to be started count: $($appsToStart.Count)"
+
+# Starting App Services
+foreach ($app in $appsToStart)
+{
+	# Start App Services
+		Write-Output "Starting App Service $($app.name)"
+		Start-AzureRmWebApp -Name $app.name -ResourceGroupName $app.ResourceGroupName -ErrorAction Continue
+		Write-Output ($app.Name + " has been started.")	
+}
+Write-Output "End of starting App Services"
+
+$appDetail = @()
+
+foreach ($app in $appsToStart)
+{
+	#Validating App Services State
+	Write-Output "Checking App Services $($app.name) state"
+	$appDetail = Get-AzureRmWebApp -ResourceGroupName $app.ResourceGroupName -Name $app.Name
+	Write-Output "App Services $($app.name) state is $($appDetail.state)'"
+	
+	if ($appDetail.state -eq "Running")
+	{
+		# The App Services started, so send notice
+		Write-Output ("   " + $app.Name + " was successfully started successfully.")
+	}
+	else
+	{
+		# The App Services failed to start, so send notice
+		Write-Error  ("   " + $app.Name + " failed to start. See App Services Logs.") -ErrorAction Continue
+	}
+}
+
+Write-Output "End of runbook execution"
