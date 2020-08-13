@@ -1,0 +1,76 @@
+<html>
+    <head>
+        <style>
+            * {
+                font-family: Calibri;
+            }
+
+            .tr-title {
+                font-size: 1.3em;
+                text-align: center;
+                color: f0ffff;
+                font-weight: 700;
+            }
+
+            .td-item {
+                font-weight: 700;
+            }
+        </style>
+    </head>
+    <body>
+        <table style="width: 100%">
+            <tr>
+                <td style="width: 50px">&nbsp;</td>
+                <td align="center">
+                    <table style="width: 700px">
+                        <tr style="background-color: #007fff; height: 50px;">
+                            <td colspan='3' class="tr-title">[Azure Automation Notify] #JobName#</td>
+                        </tr>
+                        <tr>
+                            <td style="width: 20px">&nbsp;</td>
+                            <td>
+                                <table>
+                                    <tr>
+                                        <td class="td-item">Job Name</td>
+                                    </tr>
+                                    <tr>
+                                        <td>#JobName#</td>
+                                    </tr>
+                                    <tr>
+                                        <td class="td-item" width = "25%"><br>Start Time</td>
+                                        <td class="td-item" width = "25%"><br>End Time</td>
+                                        <td class="td-item"width = "25%" ><br>Duration</td>
+                                    </tr>
+                                    <tr>
+                                        <td>#StartTime#</td>
+                                        <td>#EndTime#</td>
+                                        <td>#Duration#</td>
+                                    </tr>
+                                        
+                                    <tr>
+                                        <td class="td-item"><br>Execution Status</td>
+                                    </tr>
+                                    <tr>
+                                        <td>#Status#</td>
+                                    </tr>
+								</table>
+								<table>
+                                    <tr>
+                                        <td class="td-item"><br>Message</td>
+                                    </tr>
+                                    <tr>
+                                        <td style='#FormatFont#'>#MessageBody#</td>
+                                    </tr>		
+                                </table>
+                            </td>
+                            <td style="width: 20px;">&nbsp;</td>
+                        </tr>
+                        <tr style="background-color: #007fff; height: 5px; font-size: 1px;">
+                            <td colspan='3'>&nbsp;</td>
+                        </tr>
+                    </table>
+                </td>
+                <td style="width: 50px">&nbsp;</td>
+            </tr>
+    </body>
+</html>
